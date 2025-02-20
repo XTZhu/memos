@@ -1,88 +1,57 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useUserStore } from "@/store/module";
-import Dropdown from "./kit/Dropdown";
-import Icon from "./Icon";
+import { Dropdown, Menu, MenuButton, MenuItem } from "@mui/joy";
+import { LogOutIcon, SmileIcon } from "lucide-react";
+import { authServiceClient } from "@/grpcweb";
+import useCurrentUser from "@/hooks/useCurrentUser";
+import useNavigateTo from "@/hooks/useNavigateTo";
+import { Routes } from "@/router";
+import { workspaceStore } from "@/store/v2";
+import { cn } from "@/utils";
+import { useTranslate } from "@/utils/i18n";
 import UserAvatar from "./UserAvatar";
-import showAboutSiteDialog from "./AboutSiteDialog";
-import showSettingDialog from "./SettingDialog";
 
-const UserBanner = () => {
-  const { t } = useTranslation();
-  const userStore = useUserStore();
-  const { user } = userStore.state;
-  const [username, setUsername] = useState("Memos");
+interface Props {
+  collapsed?: boolean;
+}
 
-  useEffect(() => {
-    if (user) {
-      setUsername(user.nickname || user.username);
-    }
-  }, [user]);
+const UserBanner = (props: Props) => {
+  const { collapsed } = props;
+  const t = useTranslate();
+  const navigateTo = useNavigateTo();
+  const user = useCurrentUser();
+  const workspaceGeneralSetting = workspaceStore.state.generalSetting;
+  const title = (user ? user.nickname || user.username : workspaceGeneralSetting.customProfile?.title) || "Memos";
+  const avatarUrl = (user ? user.avatarUrl : workspaceGeneralSetting.customProfile?.logoUrl) || "/full-logo.webp";
 
-  const handleMyAccountClick = () => {
-    showSettingDialog("my-account");
-  };
-
-  const handleAboutBtnClick = () => {
-    showAboutSiteDialog();
-  };
-
-  const handleSignOutBtnClick = async () => {
-    await userStore.doSignOut();
+  const handleSignOut = async () => {
+    await authServiceClient.signOut({});
     window.location.href = "/auth";
   };
 
   return (
-    <div className="flex flex-row justify-between items-center relative w-full h-auto px-2 flex-nowrap shrink-0">
-      <Dropdown
-        className="w-full"
-        trigger={
-          <div className="px-3 py-2 max-w-full flex flex-row justify-start items-center cursor-pointer rounded-lg hover:shadow hover:bg-white dark:hover:bg-zinc-700">
-            <UserAvatar avatarUrl={user?.avatarUrl} />
-            <span className="px-1 text-lg font-medium text-slate-800 dark:text-gray-200 shrink truncate">{username}</span>
-            {user?.role === "HOST" ? (
-              <span className="text-xs px-1 bg-blue-600 dark:bg-blue-800 rounded text-white dark:text-gray-200 shadow">MOD</span>
-            ) : null}
+    <div className="relative w-full h-auto px-1 shrink-0">
+      <Dropdown>
+        <MenuButton disabled={!user} slots={{ root: "div" }}>
+          <div
+            className={cn(
+              "py-1 w-auto flex flex-row justify-start items-center cursor-pointer text-gray-800 dark:text-gray-400",
+              collapsed ? "px-1" : "px-3",
+            )}
+          >
+            <UserAvatar className="shrink-0" avatarUrl={avatarUrl} />
+            {!collapsed && <span className="ml-2 text-lg font-medium text-slate-800 dark:text-gray-300 shrink truncate">{title}</span>}
           </div>
-        }
-        actionsClassName="min-w-[128px] max-w-full"
-        positionClassName="top-full mt-2"
-        actions={
-          <>
-            {!userStore.isVisitorMode() && (
-              <>
-                <button
-                  className="w-full px-3 truncate text-left leading-10 cursor-pointer rounded flex flex-row justify-start items-center dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-800"
-                  onClick={handleMyAccountClick}
-                >
-                  <Icon.User className="w-5 h-auto mr-2 opacity-80" /> {t("setting.my-account")}
-                </button>
-                <a
-                  className="w-full px-3 truncate text-left leading-10 cursor-pointer rounded flex flex-row justify-start items-center dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-800"
-                  href={`/u/${user?.id}/rss.xml`}
-                  target="_blank"
-                >
-                  <Icon.Rss className="w-5 h-auto mr-2 opacity-80" /> RSS
-                </a>
-              </>
-            )}
-            <button
-              className="w-full px-3 truncate text-left leading-10 cursor-pointer rounded flex flex-row justify-start items-center dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-800"
-              onClick={handleAboutBtnClick}
-            >
-              <Icon.Info className="w-5 h-auto mr-2 opacity-80" /> {t("common.about")}
-            </button>
-            {!userStore.isVisitorMode() && (
-              <button
-                className="w-full px-3 truncate text-left leading-10 cursor-pointer rounded flex flex-row justify-start items-center dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-zinc-800"
-                onClick={handleSignOutBtnClick}
-              >
-                <Icon.LogOut className="w-5 h-auto mr-2 opacity-80" /> {t("common.sign-out")}
-              </button>
-            )}
-          </>
-        }
-      />
+        </MenuButton>
+        <Menu placement="bottom-start" style={{ zIndex: "9999" }}>
+          <MenuItem onClick={handleSignOut}>
+            <LogOutIcon className="w-4 h-auto opacity-60" />
+            <span className="truncate">{t("common.sign-out")}</span>
+          </MenuItem>
+          <MenuItem onClick={() => navigateTo(Routes.ABOUT)}>
+            <SmileIcon className="w-4 h-auto opacity-60" />
+            <span className="truncate">{t("common.about")}</span>
+          </MenuItem>
+        </Menu>
+      </Dropdown>
     </div>
   );
 };

@@ -1,192 +1,122 @@
-import { createBrowserRouter, redirect } from "react-router-dom";
-import { lazy } from "react";
-import { isNullorUndefined } from "@/helpers/utils";
-import store from "@/store";
-import { initialGlobalState, initialUserState } from "@/store/module";
-import DailyReview from "@/pages/DailyReview";
-import ResourcesDashboard from "@/pages/ResourcesDashboard";
+import { createBrowserRouter } from "react-router-dom";
+import App from "@/App";
+import RootLayout from "@/layouts/RootLayout";
+import SuspenseWrapper from "@/layouts/SuspenseWrapper";
+import About from "@/pages/About";
+import AdminSignIn from "@/pages/AdminSignIn";
+import Archived from "@/pages/Archived";
+import AuthCallback from "@/pages/AuthCallback";
+import Explore from "@/pages/Explore";
+import Home from "@/pages/Home";
+import Inboxes from "@/pages/Inboxes";
+import MemoDetail from "@/pages/MemoDetail";
+import NotFound from "@/pages/NotFound";
+import PermissionDenied from "@/pages/PermissionDenied";
+import Resources from "@/pages/Resources";
+import Setting from "@/pages/Setting";
+import SignIn from "@/pages/SignIn";
+import SignUp from "@/pages/SignUp";
+import UserProfile from "@/pages/UserProfile";
+import MemoDetailRedirect from "./MemoDetailRedirect";
 
-const Root = lazy(() => import("@/layouts/Root"));
-const Auth = lazy(() => import("@/pages/Auth"));
-const AuthCallback = lazy(() => import("@/pages/AuthCallback"));
-const Explore = lazy(() => import("@/pages/Explore"));
-const Home = lazy(() => import("@/pages/Home"));
-const MemoDetail = lazy(() => import("@/pages/MemoDetail"));
-const EmbedMemo = lazy(() => import("@/pages/EmbedMemo"));
-const NotFound = lazy(() => import("@/pages/NotFound"));
-
-const initialGlobalStateLoader = (() => {
-  let done = false;
-
-  return async () => {
-    if (done) {
-      return;
-    }
-    done = true;
-    try {
-      await initialGlobalState();
-    } catch (error) {
-      // do nth
-    }
-  };
-})();
+export enum Routes {
+  ROOT = "/",
+  RESOURCES = "/resources",
+  INBOX = "/inbox",
+  ARCHIVED = "/archived",
+  SETTING = "/setting",
+  EXPLORE = "/explore",
+  ABOUT = "/about",
+  AUTH = "/auth",
+}
 
 const router = createBrowserRouter([
   {
-    path: "/auth",
-    element: <Auth />,
-    loader: async () => {
-      await initialGlobalStateLoader();
-      return null;
-    },
-  },
-  {
-    path: "/auth/callback",
-    element: <AuthCallback />,
-  },
-  {
     path: "/",
-    element: <Root />,
+    element: <App />,
     children: [
       {
-        path: "",
-        element: <Home />,
-        loader: async () => {
-          await initialGlobalStateLoader();
-
-          try {
-            await initialUserState();
-          } catch (error) {
-            // do nth
-          }
-
-          const { host, user } = store.getState().user;
-          if (isNullorUndefined(host)) {
-            return redirect("/auth");
-          } else if (isNullorUndefined(user)) {
-            return redirect("/explore");
-          }
-          return null;
-        },
+        path: Routes.AUTH,
+        element: <SuspenseWrapper />,
+        children: [
+          {
+            path: "",
+            element: <SignIn />,
+          },
+          {
+            path: "admin",
+            element: <AdminSignIn />,
+          },
+          {
+            path: "signup",
+            element: <SignUp />,
+          },
+          {
+            path: "callback",
+            element: <AuthCallback />,
+          },
+        ],
       },
       {
-        path: "/u/:userId",
-        element: <Home />,
-        loader: async () => {
-          await initialGlobalStateLoader();
-
-          try {
-            await initialUserState();
-          } catch (error) {
-            // do nth
-          }
-
-          const { host } = store.getState().user;
-          if (isNullorUndefined(host)) {
-            return redirect("/auth");
-          }
-          return null;
-        },
-      },
-      {
-        path: "explore",
-        element: <Explore />,
-        loader: async () => {
-          await initialGlobalStateLoader();
-
-          try {
-            await initialUserState();
-          } catch (error) {
-            // do nth
-          }
-
-          const { host } = store.getState().user;
-          if (isNullorUndefined(host)) {
-            return redirect("/auth");
-          }
-          return null;
-        },
-      },
-      {
-        path: "review",
-        element: <DailyReview />,
-        loader: async () => {
-          await initialGlobalStateLoader();
-
-          try {
-            await initialUserState();
-          } catch (error) {
-            // do nth
-          }
-
-          const { host } = store.getState().user;
-          if (isNullorUndefined(host)) {
-            return redirect("/auth");
-          }
-          return null;
-        },
-      },
-      {
-        path: "resources",
-        element: <ResourcesDashboard />,
-        loader: async () => {
-          await initialGlobalStateLoader();
-
-          try {
-            await initialUserState();
-          } catch (error) {
-            // do nth
-          }
-
-          const { host } = store.getState().user;
-          if (isNullorUndefined(host)) {
-            return redirect("/auth");
-          }
-          return null;
-        },
+        path: Routes.ROOT,
+        element: <RootLayout />,
+        children: [
+          {
+            path: "",
+            element: <Home />,
+          },
+          {
+            path: Routes.RESOURCES,
+            element: <Resources />,
+          },
+          {
+            path: Routes.INBOX,
+            element: <Inboxes />,
+          },
+          {
+            path: Routes.ARCHIVED,
+            element: <Archived />,
+          },
+          {
+            path: Routes.SETTING,
+            element: <Setting />,
+          },
+          {
+            path: Routes.EXPLORE,
+            element: <Explore />,
+          },
+          {
+            path: "memos/:uid",
+            element: <MemoDetail />,
+          },
+          {
+            path: "u/:username",
+            element: <UserProfile />,
+          },
+          {
+            path: Routes.ABOUT,
+            element: <About />,
+          },
+          // Redirect old path to new path.
+          {
+            path: "m/:uid",
+            element: <MemoDetailRedirect />,
+          },
+          {
+            path: "403",
+            element: <PermissionDenied />,
+          },
+          {
+            path: "404",
+            element: <NotFound />,
+          },
+          {
+            path: "*",
+            element: <NotFound />,
+          },
+        ],
       },
     ],
-  },
-  {
-    path: "/m/:memoId",
-    element: <MemoDetail />,
-    loader: async () => {
-      await initialGlobalStateLoader();
-
-      try {
-        await initialUserState();
-      } catch (error) {
-        // do nth
-      }
-
-      const { host } = store.getState().user;
-      if (isNullorUndefined(host)) {
-        return redirect("/auth");
-      }
-      return null;
-    },
-  },
-  {
-    path: "/m/:memoId/embed",
-    element: <EmbedMemo />,
-    loader: async () => {
-      await initialGlobalStateLoader();
-
-      try {
-        await initialUserState();
-      } catch (error) {
-        // do nth
-      }
-      return null;
-    },
-  },
-  {
-    path: "*",
-    element: <NotFound />,
-    loader: async () => {
-      await initialGlobalStateLoader();
-      return null;
-    },
   },
 ]);
 

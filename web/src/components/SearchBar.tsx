@@ -1,66 +1,45 @@
-import { useEffect, useState, useRef } from "react";
-import { useTranslation } from "react-i18next";
-import useDebounce from "@/hooks/useDebounce";
-import { useFilterStore, useDialogStore } from "@/store/module";
-import Icon from "./Icon";
+import { SearchIcon } from "lucide-react";
+import { useState } from "react";
+import { useMemoFilterStore } from "@/store/v1";
+import { useTranslate } from "@/utils/i18n";
+import MemoDisplaySettingMenu from "./MemoDisplaySettingMenu";
 
 const SearchBar = () => {
-  const { t } = useTranslation();
-  const filterStore = useFilterStore();
-  const dialogStore = useDialogStore();
+  const t = useTranslate();
+  const memoFilterStore = useMemoFilterStore();
   const [queryText, setQueryText] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!inputRef.current) {
-        return;
+  const onTextChange = (event: React.FormEvent<HTMLInputElement>) => {
+    setQueryText(event.currentTarget.value);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (queryText !== "") {
+        const words = queryText.split(" ");
+        words.forEach((word) => {
+          memoFilterStore.addFilter({
+            factor: "contentSearch",
+            value: word,
+          });
+        });
+        setQueryText("");
       }
-      if (dialogStore.getState().dialogStack.length) {
-        return;
-      }
-      const isMetaKey = event.ctrlKey || event.metaKey;
-      if (isMetaKey && event.key === "f") {
-        event.preventDefault();
-        inputRef.current.focus();
-        return;
-      }
-    };
-    document.body.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.body.removeEventListener("keydown", handleKeyDown);
-    };
-  }, []);
-
-  useEffect(() => {
-    const text = filterStore.getState().text;
-    setQueryText(text === undefined ? "" : text);
-  }, [filterStore.state.text]);
-
-  useDebounce(
-    () => {
-      filterStore.setTextFilter(queryText.length === 0 ? undefined : queryText);
-    },
-    200,
-    [queryText]
-  );
-
-  const handleTextQueryInput = (event: React.FormEvent<HTMLInputElement>) => {
-    const text = event.currentTarget.value;
-    setQueryText(text);
+    }
   };
 
   return (
-    <div className="w-full h-9 flex flex-row justify-start items-center py-2 px-3 rounded-md bg-gray-200 dark:bg-zinc-700">
-      <Icon.Search className="w-4 h-auto opacity-30 dark:text-gray-200" />
+    <div className="relative w-full h-auto flex flex-row justify-start items-center">
+      <SearchIcon className="absolute left-3 w-4 h-auto opacity-40" />
       <input
-        className="flex ml-2 w-24 grow text-sm outline-none bg-transparent dark:text-gray-200"
-        type="text"
+        className="w-full text-gray-500 dark:text-gray-400 bg-zinc-50 dark:bg-zinc-900 border dark:border-zinc-800 text-sm leading-7 rounded-lg p-1 pl-8 outline-none"
         placeholder={t("memo.search-placeholder")}
-        ref={inputRef}
         value={queryText}
-        onChange={handleTextQueryInput}
+        onChange={onTextChange}
+        onKeyDown={onKeyDown}
       />
+      <MemoDisplaySettingMenu className="absolute right-3 top-3" />
     </div>
   );
 };

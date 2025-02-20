@@ -1,115 +1,85 @@
-import { Select, Switch, Option } from "@mui/joy";
-import React from "react";
-import { useTranslation } from "react-i18next";
-import { useGlobalStore, useUserStore } from "@/store/module";
-import { VISIBILITY_SELECTOR_ITEMS } from "@/helpers/consts";
+import { Divider, Option, Select } from "@mui/joy";
+import { observer } from "mobx-react-lite";
+import { userStore } from "@/store/v2";
+import { Visibility } from "@/types/proto/api/v1/memo_service";
+import { UserSetting } from "@/types/proto/api/v1/user_service";
+import { useTranslate } from "@/utils/i18n";
+import { convertVisibilityFromString, convertVisibilityToString } from "@/utils/memo";
 import AppearanceSelect from "../AppearanceSelect";
 import LocaleSelect from "../LocaleSelect";
-import "@/less/settings/preferences-section.less";
+import VisibilityIcon from "../VisibilityIcon";
+import WebhookSection from "./WebhookSection";
 
-const PreferencesSection = () => {
-  const { t } = useTranslation();
-  const globalStore = useGlobalStore();
-  const userStore = useUserStore();
-  const { appearance, locale } = globalStore.state;
-  const { setting, localSetting } = userStore.state.user as User;
-  const visibilitySelectorItems = VISIBILITY_SELECTOR_ITEMS.map((item) => {
-    return {
-      value: item.value,
-      text: t(`memo.visibility.${item.text.toLowerCase()}`),
-    };
-  });
-
-  const dailyReviewTimeOffsetOptions: number[] = [...Array(24).keys()];
+const PreferencesSection = observer(() => {
+  const t = useTranslate();
+  const setting = userStore.state.userSetting as UserSetting;
 
   const handleLocaleSelectChange = async (locale: Locale) => {
-    await userStore.upsertUserSetting("locale", locale);
-    globalStore.setLocale(locale);
+    await userStore.updateUserSetting(
+      {
+        locale,
+      },
+      ["locale"],
+    );
   };
 
   const handleAppearanceSelectChange = async (appearance: Appearance) => {
-    await userStore.upsertUserSetting("appearance", appearance);
-    globalStore.setAppearance(appearance);
+    await userStore.updateUserSetting(
+      {
+        appearance,
+      },
+      ["appearance"],
+    );
   };
 
   const handleDefaultMemoVisibilityChanged = async (value: string) => {
-    await userStore.upsertUserSetting("memo-visibility", value);
-  };
-
-  const handleDoubleClickEnabledChanged = (event: React.ChangeEvent<HTMLInputElement>) => {
-    userStore.upsertLocalSetting({ ...localSetting, enableDoubleClickEditing: event.target.checked });
-  };
-
-  const handleDailyReviewTimeOffsetChanged = (value: number) => {
-    userStore.upsertLocalSetting({ ...localSetting, dailyReviewTimeOffset: value });
+    await userStore.updateUserSetting(
+      {
+        memoVisibility: value,
+      },
+      ["memo_visibility"],
+    );
   };
 
   return (
-    <div className="section-container preferences-section-container">
-      <p className="title-text">{t("common.basic")}</p>
-      <div className="form-label selector">
-        <span className="normal-text">{t("common.language")}</span>
-        <LocaleSelect value={locale} onChange={handleLocaleSelectChange} />
+    <div className="w-full flex flex-col gap-2 pt-2 pb-4">
+      <p className="font-medium text-gray-700 dark:text-gray-500">{t("common.basic")}</p>
+      <div className="w-full flex flex-row justify-between items-center">
+        <span>{t("common.language")}</span>
+        <LocaleSelect value={setting.locale} onChange={handleLocaleSelectChange} />
       </div>
-      <div className="form-label selector">
-        <span className="normal-text">{t("setting.preference-section.theme")}</span>
-        <AppearanceSelect value={appearance} onChange={handleAppearanceSelectChange} />
+      <div className="w-full flex flex-row justify-between items-center">
+        <span>{t("setting.preference-section.theme")}</span>
+        <AppearanceSelect value={setting.appearance as Appearance} onChange={handleAppearanceSelectChange} />
       </div>
-      <p className="title-text">{t("setting.preference")}</p>
-      <div className="form-label selector">
-        <span className="normal-text">{t("setting.preference-section.default-memo-visibility")}</span>
+      <p className="font-medium text-gray-700 dark:text-gray-500">{t("setting.preference")}</p>
+      <div className="w-full flex flex-row justify-between items-center">
+        <span className="truncate">{t("setting.preference-section.default-memo-visibility")}</span>
         <Select
-          className="!min-w-[10rem] w-auto text-sm"
+          className="!min-w-fit"
           value={setting.memoVisibility}
+          startDecorator={<VisibilityIcon visibility={convertVisibilityFromString(setting.memoVisibility)} />}
           onChange={(_, visibility) => {
             if (visibility) {
               handleDefaultMemoVisibilityChanged(visibility);
             }
           }}
         >
-          {visibilitySelectorItems.map((item) => (
-            <Option key={item.value} value={item.value} className="whitespace-nowrap">
-              {item.text}
-            </Option>
-          ))}
-        </Select>
-      </div>
-      <div className="form-label selector">
-        <span className="normal-text">{t("setting.preference-section.daily-review-time-offset")}</span>
-        <span className="w-auto inline-flex">
-          <Select
-            placeholder="hh"
-            className="!min-w-[4rem] w-auto text-sm"
-            value={localSetting.dailyReviewTimeOffset}
-            onChange={(_, value) => {
-              if (value !== null) {
-                handleDailyReviewTimeOffsetChanged(value);
-              }
-            }}
-            slotProps={{
-              listbox: {
-                sx: {
-                  maxHeight: "15rem",
-                  overflow: "auto",
-                },
-              },
-            }}
-          >
-            {dailyReviewTimeOffsetOptions.map((item) => (
+          {[Visibility.PRIVATE, Visibility.PROTECTED, Visibility.PUBLIC]
+            .map((v) => convertVisibilityToString(v))
+            .map((item) => (
               <Option key={item} value={item} className="whitespace-nowrap">
-                {item.toString().padStart(2, "0")}
+                {t(`memo.visibility.${item.toLowerCase() as Lowercase<typeof item>}`)}
               </Option>
             ))}
-          </Select>
-        </span>
+        </Select>
       </div>
 
-      <label className="form-label selector">
-        <span className="normal-text">{t("setting.preference-section.enable-double-click")}</span>
-        <Switch className="ml-2" checked={localSetting.enableDoubleClickEditing} onChange={handleDoubleClickEnabledChanged} />
-      </label>
+      <Divider className="!my-3" />
+
+      <WebhookSection />
     </div>
   );
-};
+});
 
 export default PreferencesSection;
