@@ -4,55 +4,60 @@ import (
 	"context"
 	"testing"
 
+	"github.com/lithammer/shortuuid/v4"
 	"github.com/stretchr/testify/require"
-	"github.com/usememos/memos/api"
+
+	"github.com/usememos/memos/store"
 )
 
 func TestResourceStore(t *testing.T) {
 	ctx := context.Background()
-	store := NewTestingStore(ctx, t)
-	_, err := store.CreateResource(ctx, &api.ResourceCreate{
-		CreatorID:    101,
-		Filename:     "test.epub",
-		Blob:         []byte("test"),
-		InternalPath: "",
-		ExternalLink: "",
-		Type:         "application/epub+zip",
-		Size:         637607,
-		PublicID:     "a02748e2-9b56-46b2-8b1f-72d686d52f77",
+	ts := NewTestingStore(ctx, t)
+	_, err := ts.CreateResource(ctx, &store.Resource{
+		UID:       shortuuid.New(),
+		CreatorID: 101,
+		Filename:  "test.epub",
+		Blob:      []byte("test"),
+		Type:      "application/epub+zip",
+		Size:      637607,
 	})
 	require.NoError(t, err)
 
 	correctFilename := "test.epub"
 	incorrectFilename := "test.png"
-	res, err := store.FindResource(ctx, &api.ResourceFind{
+	resource, err := ts.GetResource(ctx, &store.FindResource{
 		Filename: &correctFilename,
 	})
 	require.NoError(t, err)
-	require.Equal(t, correctFilename, res.Filename)
-	require.Equal(t, 1, res.ID)
-	_, err = store.FindResource(ctx, &api.ResourceFind{
+	require.Equal(t, correctFilename, resource.Filename)
+	require.Equal(t, int32(1), resource.ID)
+
+	notFoundResource, err := ts.GetResource(ctx, &store.FindResource{
 		Filename: &incorrectFilename,
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.Nil(t, notFoundResource)
 
-	correctCreatorID := 101
-	incorrectCreatorID := 102
-	_, err = store.FindResource(ctx, &api.ResourceFind{
+	var correctCreatorID int32 = 101
+	var incorrectCreatorID int32 = 102
+	_, err = ts.GetResource(ctx, &store.FindResource{
 		CreatorID: &correctCreatorID,
 	})
 	require.NoError(t, err)
-	_, err = store.FindResource(ctx, &api.ResourceFind{
+
+	notFoundResource, err = ts.GetResource(ctx, &store.FindResource{
 		CreatorID: &incorrectCreatorID,
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.Nil(t, notFoundResource)
 
-	err = store.DeleteResource(ctx, &api.ResourceDelete{
+	err = ts.DeleteResource(ctx, &store.DeleteResource{
 		ID: 1,
 	})
 	require.NoError(t, err)
-	err = store.DeleteResource(ctx, &api.ResourceDelete{
+	err = ts.DeleteResource(ctx, &store.DeleteResource{
 		ID: 2,
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+	ts.Close()
 }
