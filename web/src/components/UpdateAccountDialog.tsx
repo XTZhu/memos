@@ -1,10 +1,14 @@
+import { Textarea } from "@mui/joy";
+import { Button, Input } from "@usememos/mui";
 import { isEqual } from "lodash-es";
-import { useEffect, useState } from "react";
+import { XIcon } from "lucide-react";
+import { useState } from "react";
 import { toast } from "react-hot-toast";
-import { useTranslation } from "react-i18next";
-import { useUserStore } from "@/store/module";
 import { convertFileToBase64 } from "@/helpers/utils";
-import Icon from "./Icon";
+import useCurrentUser from "@/hooks/useCurrentUser";
+import { userStore, workspaceStore } from "@/store/v2";
+import { User as UserPb } from "@/types/proto/api/v1/user_service";
+import { useTranslate } from "@/utils/i18n";
 import { generateDialog } from "./Dialog";
 import UserAvatar from "./UserAvatar";
 
@@ -15,22 +19,20 @@ interface State {
   username: string;
   nickname: string;
   email: string;
+  description: string;
 }
 
-const UpdateAccountDialog: React.FC<Props> = ({ destroy }: Props) => {
-  const { t } = useTranslation();
-  const userStore = useUserStore();
-  const user = userStore.state.user as User;
+const UpdateAccountDialog = ({ destroy }: Props) => {
+  const t = useTranslate();
+  const currentUser = useCurrentUser();
   const [state, setState] = useState<State>({
-    avatarUrl: user.avatarUrl,
-    username: user.username,
-    nickname: user.nickname,
-    email: user.email,
+    avatarUrl: currentUser.avatarUrl,
+    username: currentUser.username,
+    nickname: currentUser.nickname,
+    email: currentUser.email,
+    description: currentUser.description,
   });
-
-  useEffect(() => {
-    // do nth
-  }, []);
+  const workspaceGeneralSetting = workspaceStore.state.generalSetting;
 
   const handleCloseBtnClick = () => {
     destroy();
@@ -86,6 +88,15 @@ const UpdateAccountDialog: React.FC<Props> = ({ destroy }: Props) => {
     });
   };
 
+  const handleDescriptionChanged = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setState((state) => {
+      return {
+        ...state,
+        description: e.target.value as string,
+      };
+    });
+  };
+
   const handleSaveBtnClick = async () => {
     if (state.username === "") {
       toast.error(t("message.fill-all"));
@@ -93,48 +104,58 @@ const UpdateAccountDialog: React.FC<Props> = ({ destroy }: Props) => {
     }
 
     try {
-      const user = userStore.getState().user as User;
-      const userPatch: UserPatch = {
-        id: user.id,
-      };
-      if (!isEqual(user.avatarUrl, state.avatarUrl)) {
-        userPatch.avatarUrl = state.avatarUrl;
+      const updateMask = [];
+      if (!isEqual(currentUser.username, state.username)) {
+        updateMask.push("username");
       }
-      if (!isEqual(user.nickname, state.nickname)) {
-        userPatch.nickname = state.nickname;
+      if (!isEqual(currentUser.nickname, state.nickname)) {
+        updateMask.push("nickname");
       }
-      if (!isEqual(user.username, state.username)) {
-        userPatch.username = state.username;
+      if (!isEqual(currentUser.email, state.email)) {
+        updateMask.push("email");
       }
-      if (!isEqual(user.email, state.email)) {
-        userPatch.email = state.email;
+      if (!isEqual(currentUser.avatarUrl, state.avatarUrl)) {
+        updateMask.push("avatar_url");
       }
-      await userStore.patchUser(userPatch);
+      if (!isEqual(currentUser.description, state.description)) {
+        updateMask.push("description");
+      }
+      await userStore.updateUser(
+        UserPb.fromPartial({
+          name: currentUser.name,
+          username: state.username,
+          nickname: state.nickname,
+          email: state.email,
+          avatarUrl: state.avatarUrl,
+          description: state.description,
+        }),
+        updateMask,
+      );
       toast.success(t("message.update-succeed"));
       handleCloseBtnClick();
     } catch (error: any) {
       console.error(error);
-      toast.error(error.response.data.error);
+      toast.error(error.details);
     }
   };
 
   return (
-    <>
-      <div className="dialog-header-container !w-64">
+    <div className="max-w-full shadow flex flex-col justify-start items-start bg-white dark:bg-zinc-800 dark:text-gray-300 p-4 rounded-lg">
+      <div className="flex flex-row justify-between items-center mb-4 gap-2 w-full">
         <p className="title-text">{t("setting.account-section.update-information")}</p>
-        <button className="btn close-btn" onClick={handleCloseBtnClick}>
-          <Icon.X />
-        </button>
+        <Button size="sm" variant="plain" onClick={handleCloseBtnClick}>
+          <XIcon className="w-5 h-auto" />
+        </Button>
       </div>
-      <div className="dialog-content-container space-y-2">
+      <div className="flex flex-col justify-start items-start !w-64 space-y-2">
         <div className="w-full flex flex-row justify-start items-center">
           <span className="text-sm mr-2">{t("common.avatar")}</span>
           <label className="relative cursor-pointer hover:opacity-80">
-            <UserAvatar className="!w-12 !h-12" avatarUrl={state.avatarUrl} />
+            <UserAvatar className="!w-10 !h-10" avatarUrl={state.avatarUrl} />
             <input type="file" accept="image/*" className="absolute invisible w-full h-full inset-0" onChange={handleAvatarChanged} />
           </label>
           {state.avatarUrl && (
-            <Icon.X
+            <XIcon
               className="w-4 h-auto ml-1 cursor-pointer opacity-60 hover:opacity-80"
               onClick={() =>
                 setPartialState({
@@ -146,29 +167,48 @@ const UpdateAccountDialog: React.FC<Props> = ({ destroy }: Props) => {
         </div>
         <p className="text-sm">
           {t("common.username")}
-          <span className="text-sm text-gray-400 ml-1">{t("setting.account-section.username-note")}</span>
+          <span className="text-sm text-gray-400 ml-1">({t("setting.account-section.username-note")})</span>
         </p>
-        <input type="text" className="input-text" value={state.username} onChange={handleUsernameChanged} />
+        <Input
+          className="w-full"
+          value={state.username}
+          onChange={handleUsernameChanged}
+          disabled={workspaceGeneralSetting.disallowChangeUsername}
+        />
         <p className="text-sm">
           {t("common.nickname")}
-          <span className="text-sm text-gray-400 ml-1">{t("setting.account-section.nickname-note")}</span>
+          <span className="text-sm text-gray-400 ml-1">({t("setting.account-section.nickname-note")})</span>
         </p>
-        <input type="text" className="input-text" value={state.nickname} onChange={handleNicknameChanged} />
+        <Input
+          className="w-full"
+          value={state.nickname}
+          onChange={handleNicknameChanged}
+          disabled={workspaceGeneralSetting.disallowChangeNickname}
+        />
         <p className="text-sm">
           {t("common.email")}
-          <span className="text-sm text-gray-400 ml-1">{t("setting.account-section.email-note")}</span>
+          <span className="text-sm text-gray-400 ml-1">({t("setting.account-section.email-note")})</span>
         </p>
-        <input type="text" className="input-text" value={state.email} onChange={handleEmailChanged} />
-        <div className="pt-2 w-full flex flex-row justify-end items-center space-x-2">
-          <span className="btn-text" onClick={handleCloseBtnClick}>
+        <Input fullWidth type="email" value={state.email} onChange={handleEmailChanged} />
+        <p className="text-sm">{t("common.description")}</p>
+        <Textarea
+          className="w-full"
+          color="neutral"
+          minRows={2}
+          maxRows={4}
+          value={state.description}
+          onChange={handleDescriptionChanged}
+        />
+        <div className="w-full flex flex-row justify-end items-center pt-4 space-x-2">
+          <Button variant="plain" onClick={handleCloseBtnClick}>
             {t("common.cancel")}
-          </span>
-          <span className="btn-primary" onClick={handleSaveBtnClick}>
+          </Button>
+          <Button color="primary" onClick={handleSaveBtnClick}>
             {t("common.save")}
-          </span>
+          </Button>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 
@@ -178,7 +218,7 @@ function showUpdateAccountDialog() {
       className: "update-account-dialog",
       dialogName: "update-account-dialog",
     },
-    UpdateAccountDialog
+    UpdateAccountDialog,
   );
 }
 

@@ -1,8 +1,7 @@
-import React, { useState } from "react";
-import { getDateTimeString } from "@/helpers/datetime";
-import Icon from "./Icon";
+import { Button } from "@usememos/mui";
+import { XIcon } from "lucide-react";
+import React, { useEffect, useState } from "react";
 import { generateDialog } from "./Dialog";
-import "@/less/preview-image-dialog.less";
 
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 5;
@@ -32,14 +31,7 @@ const PreviewImageDialog: React.FC<Props> = ({ destroy, imgUrls, initialIndex }:
   let endX = -1;
 
   const handleCloseBtnClick = () => {
-    destroy();
-  };
-
-  const handleDownloadBtnClick = () => {
-    const a = document.createElement("a");
-    a.href = imgUrls[currentIndex];
-    a.download = `memos-${getDateTimeString(Date.now())}.png`;
-    a.click();
+    destroyAndResetViewport();
   };
 
   const handleTouchStart = (event: React.TouchEvent) => {
@@ -81,7 +73,7 @@ const PreviewImageDialog: React.FC<Props> = ({ destroy, imgUrls, initialIndex }:
       setState(defaultState);
       setCurrentIndex(currentIndex - 1);
     } else {
-      destroy();
+      destroyAndResetViewport();
     }
   };
 
@@ -90,7 +82,7 @@ const PreviewImageDialog: React.FC<Props> = ({ destroy, imgUrls, initialIndex }:
       setState(defaultState);
       setCurrentIndex(currentIndex + 1);
     } else {
-      destroy();
+      destroyAndResetViewport();
     }
   };
 
@@ -98,6 +90,14 @@ const PreviewImageDialog: React.FC<Props> = ({ destroy, imgUrls, initialIndex }:
     if (event.clientX < window.innerWidth / 2) {
       showPrevImg();
     } else {
+      showNextImg();
+    }
+  };
+
+  const handleImageContainerKeyDown = (event: KeyboardEvent) => {
+    if (event.key == "ArrowLeft") {
+      showPrevImg();
+    } else if (event.key == "ArrowRight") {
       showNextImg();
     }
   };
@@ -115,23 +115,53 @@ const PreviewImageDialog: React.FC<Props> = ({ destroy, imgUrls, initialIndex }:
     });
   };
 
+  const setViewportScalable = () => {
+    const viewport = document.querySelector("meta[name=viewport]");
+    if (viewport) {
+      const contentAttrs = viewport.getAttribute("content");
+      if (contentAttrs) {
+        viewport.setAttribute("content", contentAttrs.replace("user-scalable=no", "user-scalable=yes"));
+      }
+    }
+  };
+
+  const destroyAndResetViewport = () => {
+    const viewport = document.querySelector("meta[name=viewport]");
+    if (viewport) {
+      const contentAttrs = viewport.getAttribute("content");
+      if (contentAttrs) {
+        viewport.setAttribute("content", contentAttrs.replace("user-scalable=yes", "user-scalable=no"));
+      }
+    }
+    destroy();
+  };
+
   const imageComputedStyle = {
     transform: `scale(${state.scale})`,
     transformOrigin: `${state.originX === -1 ? "center" : `${state.originX}px`} ${state.originY === -1 ? "center" : `${state.originY}px`}`,
   };
 
+  useEffect(() => {
+    setViewportScalable();
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleImageContainerKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleImageContainerKeyDown);
+    };
+  }, [currentIndex]);
+
   return (
     <>
-      <div className="btns-container">
-        <button className="btn" onClick={handleCloseBtnClick}>
-          <Icon.X className="icon-img" />
-        </button>
-        <button className="btn" onClick={handleDownloadBtnClick}>
-          <Icon.Download className="icon-img" />
-        </button>
+      <div className="fixed top-8 right-8 flex flex-col justify-start items-center">
+        <Button onClick={handleCloseBtnClick}>
+          <XIcon className="w-6 h-auto" />
+        </Button>
       </div>
-      <div className="img-container" onClick={handleImgContainerClick}>
+      <div className="w-full h-full p-4 sm:p-20 flex flex-col justify-center items-center hide-scrollbar" onClick={handleImgContainerClick}>
         <img
+          className="h-auto w-auto max-w-full max-h-full shadow"
           style={imageComputedStyle}
           src={imgUrls[currentIndex]}
           onClick={(e) => e.stopPropagation()}
@@ -139,6 +169,8 @@ const PreviewImageDialog: React.FC<Props> = ({ destroy, imgUrls, initialIndex }:
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onWheel={handleImgContainerScroll}
+          decoding="async"
+          loading="lazy"
         />
       </div>
     </>
@@ -148,13 +180,13 @@ const PreviewImageDialog: React.FC<Props> = ({ destroy, imgUrls, initialIndex }:
 export default function showPreviewImageDialog(imgUrls: string[] | string, initialIndex?: number): void {
   generateDialog(
     {
-      className: "preview-image-dialog",
+      className: "preview-image-dialog p-0 z-[1001]",
       dialogName: "preview-image-dialog",
     },
     PreviewImageDialog,
     {
       imgUrls: Array.isArray(imgUrls) ? imgUrls : [imgUrls],
       initialIndex: initialIndex || 0,
-    }
+    },
   );
 }

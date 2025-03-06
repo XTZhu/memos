@@ -2,378 +2,154 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
-	"sort"
-	"strings"
+	"log/slog"
+	"os"
+	"path/filepath"
 
-	"github.com/usememos/memos/api"
-	"github.com/usememos/memos/common"
+	"github.com/pkg/errors"
+
+	"github.com/usememos/memos/internal/util"
+	"github.com/usememos/memos/plugin/storage/s3"
+	storepb "github.com/usememos/memos/proto/gen/store"
 )
 
-// resourceRaw is the store model for an Resource.
-// Fields have exactly the same meanings as Resource.
-type resourceRaw struct {
-	ID int
+type Resource struct {
+	// ID is the system generated unique identifier for the resource.
+	ID int32
+	// UID is the user defined unique identifier for the resource.
+	UID string
 
 	// Standard fields
-	CreatorID int
+	CreatorID int32
 	CreatedTs int64
 	UpdatedTs int64
 
 	// Domain specific fields
-	Filename         string
-	Blob             []byte
-	InternalPath     string
-	ExternalLink     string
-	Type             string
-	Size             int64
-	PublicID         string
-	LinkedMemoAmount int
+	Filename    string
+	Blob        []byte
+	Type        string
+	Size        int64
+	StorageType storepb.ResourceStorageType
+	Reference   string
+	Payload     *storepb.ResourcePayload
+
+	// The related memo ID.
+	MemoID *int32
 }
 
-func (raw *resourceRaw) toResource() *api.Resource {
-	return &api.Resource{
-		ID: raw.ID,
-
-		// Standard fields
-		CreatorID: raw.CreatorID,
-		CreatedTs: raw.CreatedTs,
-		UpdatedTs: raw.UpdatedTs,
-
-		// Domain specific fields
-		Filename:         raw.Filename,
-		Blob:             raw.Blob,
-		InternalPath:     raw.InternalPath,
-		ExternalLink:     raw.ExternalLink,
-		Type:             raw.Type,
-		Size:             raw.Size,
-		PublicID:         raw.PublicID,
-		LinkedMemoAmount: raw.LinkedMemoAmount,
-	}
+type FindResource struct {
+	GetBlob        bool
+	ID             *int32
+	UID            *string
+	CreatorID      *int32
+	Filename       *string
+	FilenameSearch *string
+	MemoID         *int32
+	HasRelatedMemo bool
+	StorageType    *storepb.ResourceStorageType
+	Limit          *int
+	Offset         *int
 }
 
-func (s *Store) ComposeMemoResourceList(ctx context.Context, memo *api.Memo) error {
-	resourceList, err := s.FindResourceList(ctx, &api.ResourceFind{
-		MemoID: &memo.ID,
-	})
-	if err != nil {
-		return err
-	}
-
-	for _, resource := range resourceList {
-		memoResource, err := s.FindMemoResource(ctx, &api.MemoResourceFind{
-			MemoID:     &memo.ID,
-			ResourceID: &resource.ID,
-		})
-		if err != nil {
-			return err
-		}
-
-		resource.CreatedTs = memoResource.CreatedTs
-		resource.UpdatedTs = memoResource.UpdatedTs
-	}
-
-	sort.Slice(resourceList, func(i, j int) bool {
-		if resourceList[i].CreatedTs != resourceList[j].CreatedTs {
-			return resourceList[i].CreatedTs < resourceList[j].CreatedTs
-		}
-
-		return resourceList[i].ID < resourceList[j].ID
-	})
-
-	memo.ResourceList = resourceList
-
-	return nil
+type UpdateResource struct {
+	ID        int32
+	UID       *string
+	UpdatedTs *int64
+	Filename  *string
+	MemoID    *int32
+	Reference *string
+	Payload   *storepb.ResourcePayload
 }
 
-func (s *Store) CreateResource(ctx context.Context, create *api.ResourceCreate) (*api.Resource, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, FormatError(err)
-	}
-	defer tx.Rollback()
+type DeleteResource struct {
+	ID     int32
+	MemoID *int32
+}
 
-	resourceRaw, err := createResourceImpl(ctx, tx, create)
+func (s *Store) CreateResource(ctx context.Context, create *Resource) (*Resource, error) {
+	if !util.UIDMatcher.MatchString(create.UID) {
+		return nil, errors.New("invalid uid")
+	}
+	return s.driver.CreateResource(ctx, create)
+}
+
+func (s *Store) ListResources(ctx context.Context, find *FindResource) ([]*Resource, error) {
+	return s.driver.ListResources(ctx, find)
+}
+
+func (s *Store) GetResource(ctx context.Context, find *FindResource) (*Resource, error) {
+	resources, err := s.ListResources(ctx, find)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, FormatError(err)
+	if len(resources) == 0 {
+		return nil, nil
 	}
 
-	resource := resourceRaw.toResource()
-
-	return resource, nil
+	return resources[0], nil
 }
 
-func (s *Store) FindResourceList(ctx context.Context, find *api.ResourceFind) ([]*api.Resource, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, FormatError(err)
+func (s *Store) UpdateResource(ctx context.Context, update *UpdateResource) error {
+	if update.UID != nil && !util.UIDMatcher.MatchString(*update.UID) {
+		return errors.New("invalid uid")
 	}
-	defer tx.Rollback()
-
-	resourceRawList, err := findResourceListImpl(ctx, tx, find)
-	if err != nil {
-		return nil, err
-	}
-
-	resourceList := []*api.Resource{}
-	for _, raw := range resourceRawList {
-		resourceList = append(resourceList, raw.toResource())
-	}
-
-	return resourceList, nil
+	return s.driver.UpdateResource(ctx, update)
 }
 
-func (s *Store) FindResource(ctx context.Context, find *api.ResourceFind) (*api.Resource, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) DeleteResource(ctx context.Context, delete *DeleteResource) error {
+	resource, err := s.GetResource(ctx, &FindResource{ID: &delete.ID})
 	if err != nil {
-		return nil, FormatError(err)
+		return errors.Wrap(err, "failed to get resource")
 	}
-	defer tx.Rollback()
-
-	list, err := findResourceListImpl(ctx, tx, find)
-	if err != nil {
-		return nil, err
+	if resource == nil {
+		return errors.Wrap(nil, "resource not found")
 	}
 
-	if len(list) == 0 {
-		return nil, &common.Error{Code: common.NotFound, Err: fmt.Errorf("not found")}
-	}
+	if resource.StorageType == storepb.ResourceStorageType_LOCAL {
+		if err := func() error {
+			p := filepath.FromSlash(resource.Reference)
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(s.Profile.Data, p)
+			}
+			err := os.Remove(p)
+			if err != nil {
+				return errors.Wrap(err, "failed to delete local file")
+			}
+			return nil
+		}(); err != nil {
+			return errors.Wrap(err, "failed to delete local file")
+		}
+	} else if resource.StorageType == storepb.ResourceStorageType_S3 {
+		if err := func() error {
+			s3ObjectPayload := resource.Payload.GetS3Object()
+			if s3ObjectPayload == nil {
+				return errors.Errorf("No s3 object found")
+			}
+			workspaceStorageSetting, err := s.GetWorkspaceStorageSetting(ctx)
+			if err != nil {
+				return errors.Wrap(err, "failed to get workspace storage setting")
+			}
+			s3Config := s3ObjectPayload.S3Config
+			if s3Config == nil {
+				if workspaceStorageSetting.S3Config == nil {
+					return errors.Errorf("S3 config is not found")
+				}
+				s3Config = workspaceStorageSetting.S3Config
+			}
 
-	resourceRaw := list[0]
-	resource := resourceRaw.toResource()
-
-	return resource, nil
-}
-
-func (s *Store) DeleteResource(ctx context.Context, delete *api.ResourceDelete) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return FormatError(err)
-	}
-	defer tx.Rollback()
-
-	if err := deleteResource(ctx, tx, delete); err != nil {
-		return err
-	}
-	if err := vacuum(ctx, tx); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return FormatError(err)
-	}
-
-	return nil
-}
-
-func (s *Store) PatchResource(ctx context.Context, patch *api.ResourcePatch) (*api.Resource, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, FormatError(err)
-	}
-	defer tx.Rollback()
-
-	resourceRaw, err := patchResourceImpl(ctx, tx, patch)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, FormatError(err)
-	}
-
-	resource := resourceRaw.toResource()
-
-	return resource, nil
-}
-
-func createResourceImpl(ctx context.Context, tx *sql.Tx, create *api.ResourceCreate) (*resourceRaw, error) {
-	fields := []string{"filename", "blob", "external_link", "type", "size", "creator_id", "internal_path", "public_id"}
-	values := []any{create.Filename, create.Blob, create.ExternalLink, create.Type, create.Size, create.CreatorID, create.InternalPath, create.PublicID}
-	placeholders := []string{"?", "?", "?", "?", "?", "?", "?", "?"}
-	query := `
-		INSERT INTO resource (
-			` + strings.Join(fields, ",") + `
-		)
-		VALUES (` + strings.Join(placeholders, ",") + `)
-		RETURNING id, ` + strings.Join(fields, ",") + `, created_ts, updated_ts
-	`
-	var resourceRaw resourceRaw
-	dests := []any{
-		&resourceRaw.ID,
-		&resourceRaw.Filename,
-		&resourceRaw.Blob,
-		&resourceRaw.ExternalLink,
-		&resourceRaw.Type,
-		&resourceRaw.Size,
-		&resourceRaw.CreatorID,
-		&resourceRaw.InternalPath,
-		&resourceRaw.PublicID,
-	}
-	dests = append(dests, []any{&resourceRaw.CreatedTs, &resourceRaw.UpdatedTs}...)
-	if err := tx.QueryRowContext(ctx, query, values...).Scan(dests...); err != nil {
-		return nil, FormatError(err)
-	}
-
-	return &resourceRaw, nil
-}
-
-func patchResourceImpl(ctx context.Context, tx *sql.Tx, patch *api.ResourcePatch) (*resourceRaw, error) {
-	set, args := []string{}, []any{}
-
-	if v := patch.UpdatedTs; v != nil {
-		set, args = append(set, "updated_ts = ?"), append(args, *v)
-	}
-	if v := patch.Filename; v != nil {
-		set, args = append(set, "filename = ?"), append(args, *v)
-	}
-	if v := patch.PublicID; v != nil {
-		set, args = append(set, "public_id = ?"), append(args, *v)
-	}
-
-	args = append(args, patch.ID)
-	fields := []string{"id", "filename", "external_link", "type", "size", "creator_id", "created_ts", "updated_ts", "internal_path", "public_id"}
-	query := `
-		UPDATE resource
-		SET ` + strings.Join(set, ", ") + `
-		WHERE id = ?
-		RETURNING ` + strings.Join(fields, ", ")
-	var resourceRaw resourceRaw
-	dests := []any{
-		&resourceRaw.ID,
-		&resourceRaw.Filename,
-		&resourceRaw.ExternalLink,
-		&resourceRaw.Type,
-		&resourceRaw.Size,
-		&resourceRaw.CreatorID,
-		&resourceRaw.CreatedTs,
-		&resourceRaw.UpdatedTs,
-		&resourceRaw.InternalPath,
-		&resourceRaw.PublicID,
-	}
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(dests...); err != nil {
-		return nil, FormatError(err)
-	}
-
-	return &resourceRaw, nil
-}
-
-func findResourceListImpl(ctx context.Context, tx *sql.Tx, find *api.ResourceFind) ([]*resourceRaw, error) {
-	where, args := []string{"1 = 1"}, []any{}
-
-	if v := find.ID; v != nil {
-		where, args = append(where, "resource.id = ?"), append(args, *v)
-	}
-	if v := find.CreatorID; v != nil {
-		where, args = append(where, "resource.creator_id = ?"), append(args, *v)
-	}
-	if v := find.Filename; v != nil {
-		where, args = append(where, "resource.filename = ?"), append(args, *v)
-	}
-	if v := find.MemoID; v != nil {
-		where, args = append(where, "resource.id in (SELECT resource_id FROM memo_resource WHERE memo_id = ?)"), append(args, *v)
-	}
-	if v := find.PublicID; v != nil {
-		where, args = append(where, "resource.public_id = ?"), append(args, *v)
-	}
-
-	fields := []string{"resource.id", "resource.filename", "resource.external_link", "resource.type", "resource.size", "resource.creator_id", "resource.created_ts", "resource.updated_ts", "internal_path", "public_id"}
-	if find.GetBlob {
-		fields = append(fields, "resource.blob")
-	}
-
-	query := fmt.Sprintf(`
-		SELECT
-		  COUNT(DISTINCT memo_resource.memo_id) AS linked_memo_amount,
-			%s
-		FROM resource
-		LEFT JOIN memo_resource ON resource.id = memo_resource.resource_id
-		WHERE %s
-		GROUP BY resource.id
-		ORDER BY resource.id DESC
-	`, strings.Join(fields, ", "), strings.Join(where, " AND "))
-	if find.Limit != nil {
-		query = fmt.Sprintf("%s LIMIT %d", query, *find.Limit)
-		if find.Offset != nil {
-			query = fmt.Sprintf("%s OFFSET %d", query, *find.Offset)
+			s3Client, err := s3.NewClient(ctx, s3Config)
+			if err != nil {
+				return errors.Wrap(err, "Failed to create s3 client")
+			}
+			if err := s3Client.DeleteObject(ctx, s3ObjectPayload.Key); err != nil {
+				return errors.Wrap(err, "Failed to delete s3 object")
+			}
+			return nil
+		}(); err != nil {
+			slog.Warn("Failed to delete s3 object", slog.Any("err", err))
 		}
 	}
 
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, FormatError(err)
-	}
-	defer rows.Close()
-
-	resourceRawList := make([]*resourceRaw, 0)
-	for rows.Next() {
-		var resourceRaw resourceRaw
-		dests := []any{
-			&resourceRaw.LinkedMemoAmount,
-			&resourceRaw.ID,
-			&resourceRaw.Filename,
-			&resourceRaw.ExternalLink,
-			&resourceRaw.Type,
-			&resourceRaw.Size,
-			&resourceRaw.CreatorID,
-			&resourceRaw.CreatedTs,
-			&resourceRaw.UpdatedTs,
-			&resourceRaw.InternalPath,
-			&resourceRaw.PublicID,
-		}
-		if find.GetBlob {
-			dests = append(dests, &resourceRaw.Blob)
-		}
-		if err := rows.Scan(dests...); err != nil {
-			return nil, FormatError(err)
-		}
-		resourceRawList = append(resourceRawList, &resourceRaw)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, FormatError(err)
-	}
-
-	return resourceRawList, nil
-}
-
-func deleteResource(ctx context.Context, tx *sql.Tx, delete *api.ResourceDelete) error {
-	where, args := []string{"id = ?"}, []any{delete.ID}
-
-	stmt := `DELETE FROM resource WHERE ` + strings.Join(where, " AND ")
-	result, err := tx.ExecContext(ctx, stmt, args...)
-	if err != nil {
-		return FormatError(err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return &common.Error{Code: common.NotFound, Err: fmt.Errorf("resource not found")}
-	}
-
-	return nil
-}
-
-func vacuumResource(ctx context.Context, tx *sql.Tx) error {
-	stmt := `
-	DELETE FROM 
-		resource 
-	WHERE 
-		creator_id NOT IN (
-			SELECT 
-				id 
-			FROM 
-				user
-		)`
-	_, err := tx.ExecContext(ctx, stmt)
-	if err != nil {
-		return FormatError(err)
-	}
-
-	return nil
+	return s.driver.DeleteResource(ctx, delete)
 }
